@@ -1,0 +1,15 @@
+<sdf version="1.6">
+	<world name="default">
+		<include>
+			<uri>model://sun</uri>
+		</include>
+		<include>
+			<uri>model://ground_plane</uri>
+		</include>
+		<model name="omnivelma">
+			<include>
+				<uri>model://omnivelma</uri>
+			</include>
+		</model>
+	</world>
+</sdf>

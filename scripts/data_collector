@@ -1,0 +1,103 @@
+#!/usr/bin/env python2
+
+import rospy
+import signal
+from datetime import datetime
+import sys
+import csv
+import os
+import argparse
+import pathlib2
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+
+class DataBuffer:
+	def __init__(self):
+		self.timeOffset = datetime.utcnow()
+		self.data = list()
+
+	def append(self, data):
+		entity = dict()
+		entity["time"] = (datetime.utcnow() - self.timeOffset).total_seconds()
+		entity["value"] = data
+		self.data.append(entity)
+
+class TwistBuffer:
+	def __init__(self, topicName):
+		self.topicName = topicName
+		self.linear_x = DataBuffer()
+		self.linear_y = DataBuffer()
+		self.linear_z = DataBuffer()
+
+		self.angular_x = DataBuffer()
+		self.angular_y = DataBuffer()
+		self.angular_z = DataBuffer()
+
+	def appendTwist(self, twist):
+		self.linear_x.append(twist.linear.x)
+		self.linear_y.append(twist.linear.y)
+		self.linear_z.append(twist.linear.z)
+
+		self.angular_x.append(twist.angular.x)
+		self.angular_y.append(twist.angular.y)
+		self.angular_z.append(twist.angular.z)
+
+	def append(self, data):
+		self.appendTwist(data)
+
+	def printToFile(self, filename):
+		buffers = [{"data": self.linear_x, "name": "linear_x"},
+				   {"data": self.linear_y, "name": "linear_y"},
+				   {"data": self.linear_z, "name": "linear_z"},
+				   {"data": self.angular_x, "name": "angular_x"},
+				   {"data": self.angular_y, "name": "angular_y"},
+				   {"data": self.angular_z, "name": "angular_z"}]
+		for buffer in buffers:
+			fullPath = filename + self.topicName + "_" +  buffer["name"] + ".csv"
+			print(fullPath)
+			with open(fullPath, 'wb') as fp:
+				writer = csv.writer(fp, delimiter=' ')
+				for message in buffer["data"].data:
+					writer.writerow([float(message["time"]), float(message["value"])])
+
+class OdomBuffer(TwistBuffer):
+	def __init__(self, topicName):
+		TwistBuffer.__init__(self, topicName)
+
+	def append(self, data):
+		twist = data.twist.twist
+		self.appendTwist(twist)
+
+def argParserFactory():
+	parser = argparse.ArgumentParser	(description="Simple node for recording twist and odom messages")
+	parser.add_argument("outputDirectory", help="Path to the output directory", type=os.path.abspath)
+	return parser
+
+
+def sigtermHandler(_signo, _stack_frame, buffers, path):
+	for buffer in buffers:
+		buffer.printToFile(path)
+	sys.exit(0)
+
+if __name__ == "__main__":
+	argParser = argParserFactory()
+	parsedArgs = argParser.parse_args(sys.argv[1:])
+	savePath = parsedArgs.outputDirectory
+	if not os.path.exists(savePath):
+		os.mkdir(savePath)
+	print("Saving data to %s" % savePath)
+
+	commandTopic = "/cmd_vel"
+	odomTopic = "/odom"
+
+	twistBuffer = TwistBuffer(commandTopic)
+	odomBuffer = OdomBuffer(odomTopic)
+
+	rospy.init_node("data_collector", anonymous=True)
+	rospy.Subscriber(commandTopic, Twist, lambda message: twistBuffer.append(message))
+	rospy.Subscriber(odomTopic, Odometry, lambda message: odomBuffer.append(message))
+
+	signal.signal(signal.SIGINT, lambda x,y: sigtermHandler(x, y, [twistBuffer, odomBuffer], savePath))
+	rospy.spin()
+
+

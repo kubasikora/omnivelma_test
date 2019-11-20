@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>omnivelma_test</name>
+  <version>0.0.0</version>
+  <description>The omnivelma_test package</description>
+  <maintainer email="jsikora@todo.todo">jsikora</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+</package>
