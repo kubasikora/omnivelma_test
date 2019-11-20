@@ -204,4 +204,6 @@ include_directories(
 
 catkin_install_python(PROGRAMS scripts/data_collector
                       DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-
+                      
+catkin_install_python(PROGRAMS scripts/test_trajectory_generator
+                      DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
