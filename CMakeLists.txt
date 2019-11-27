@@ -207,3 +207,10 @@ catkin_install_python(PROGRAMS scripts/data_collector
                       
 catkin_install_python(PROGRAMS scripts/test_trajectory_generator
                       DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+                      
+catkin_install_python(PROGRAMS scripts/odom_gazebo_comparator
+                      DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS scripts/test_executor
+                      DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+

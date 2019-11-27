@@ -1,0 +1,164 @@
+#!/usr/bin/env python2
+
+import rospy
+import math
+import tf2_ros
+import PyKDL
+
+import geometry_msgs.msg
+from omnivelma_driver.srv import STPT
+from velma_common import *
+from rcprg_ros_utils import exitError
+
+class SetpointGenerator():
+	def __init__(self):
+		self.tfBuffer = tf2_ros.Buffer()
+		self.tfListener = tf2_ros.TransformListener(self.tfBuffer)
+
+	def generate(self, destinationFrame, safetyTranslation):
+		rospy.sleep(0.5)
+		msg = self.tfBuffer.lookup_transform("map", destinationFrame, rospy.Time(0))
+		rot = msg.transform.rotation
+		setpointRot = PyKDL.Rotation.Quaternion(rot.x, rot.y, rot.z, rot.w)
+		trans = msg.transform.translation
+		destinationFrame = PyKDL.Frame(setpointRot, PyKDL.Vector(trans.x, trans.y, trans.z))
+		setpointVector = destinationFrame * safetyTranslation
+		setpointRot.DoRotZ(math.pi)
+		result = (setpointVector.x(), setpointVector.y(), setpointRot.GetRPY()[2])
+		print(result)
+		return result
+
+
+class VelmaTaskExecutor():
+	def __init__(self):
+		self.velma = VelmaInterface()
+		if not self.velma.waitForInit(timeout_s=10.0):
+			raise Exception("Could not initialize VelmaInterface")
+
+		if self.velma.enableMotors() != 0:
+			raise Exception("Could not enable motors")
+
+		self.velma.startHomingHP()
+		if self.velma.waitForHP() != 0:
+			raise Exception("Could not home head pan motor")
+
+		self.velma.startHomingHT()
+		if self.velma.waitForHT() != 0:
+			raise Exception("Could not home head tilt motor")
+
+		diag = self.velma.getCoreCsDiag()
+		if not diag.motorsReady():
+			raise Exception("Motors must be homed and ready to use for this test.")		
+
+		self.omniplannerServiceName = "/omniplanner/go_to_stpt"
+		self.omniplannerService = rospy.ServiceProxy(self.omniplannerServiceName, STPT)
+
+	def setJointImpedanceMode(self):
+		self.velma.moveJointImpToCurrentPos(start_time=0.2)
+		error = self.velma.waitForJoint()
+		if error != 0:
+			raise Exception("The action should have ended without error, but the error code is {}".format(error))
+
+		rospy.sleep(0.5)
+		diag = self.velma.getCoreCsDiag()
+		if not diag.inStateJntImp():
+			raise Exception("Core CS should be in joint impedance mode but it is not")
+
+	def moveBodyToStartingPosition(self):
+		startingJointState = {
+			'torso_0_joint':0,
+        	'right_arm_0_joint':-0.3,   
+        	'left_arm_0_joint':0.3,
+        	'right_arm_1_joint':-1.8,   
+        	'left_arm_1_joint':1.8,
+        	'right_arm_2_joint':1.25,   
+        	'left_arm_2_joint':-1.25,
+        	'right_arm_3_joint':0.85,   
+        	'left_arm_3_joint':-0.85,
+        	'right_arm_4_joint':0,      
+        	'left_arm_4_joint':0,
+        	'right_arm_5_joint':-0.5,   
+        	'left_arm_5_joint':0.5,
+        	'right_arm_6_joint':0,      
+        	'left_arm_6_joint':0
+        }
+		self.velma.moveJoint(startingJointState, 3.0, start_time=0.5, position_tol=10.0/180.0*math.pi)
+		if self.velma.waitForJoint() != 0:
+			raise Exception("Moving body failed")
+
+	def moveHeadToStartingPosition(self):
+		startingHeadState = (0, 0)
+		self.velma.moveHead(startingHeadState, 3.0, start_time=0.5)
+		if self.velma.waitForHead() != 0:
+			raise Exception("Moving head failed")
+		rospy.sleep(0.5)
+
+		if not isHeadConfigurationClose(self.velma.getHeadCurrentConfiguration(), startingHeadState, 0.1):
+			raise Exception("Head too far from destination")
+
+	def moveToStartingPosition(self):
+		self.setJointImpedanceMode()
+		self.moveBodyToStartingPosition()
+		self.moveHeadToStartingPosition()
+
+	def hideHands(self):
+		handDesiredState = [0.5*math.pi, 0.5*math.pi, 0.5*math.pi, math.pi]
+
+		self.velma.moveHandRight(handDesiredState, [1, 1, 1, 1], [2000, 2000, 2000, 2000], 1000, hold=True)
+		self.velma.moveHandLeft(handDesiredState, [1, 1, 1, 1], [2000, 2000, 2000, 2000], 1000, hold=True)
+		if self.velma.waitForHandRight() != 0 and self.velma.waitForHandLeft() != 0:
+			raise Exception("Could not hide hands")
+
+	def driveToPointOnMap(self, setpoint):
+		(x, y, yaw) = setpoint
+		print(x)
+		print(y)
+		print(yaw)
+		setpoint = STPT
+		setpoint.x = x
+		setpoint.y = y
+		setpoint.theta = yaw
+		setpoint.linear_velocity = 0.0
+		setpoint.angular_velocity = 0.0
+
+		response = self.omniplannerService(setpoint)
+		print(response)
+
+if __name__ == "__main__":
+	rospy.init_node('bsc_test_executor')
+	rospy.sleep(0.5)
+	try:
+		setpointGenerator = SetpointGenerator()
+		worker = VelmaTaskExecutor()
+
+		print("Moving to position zero")
+		worker.moveToStartingPosition()
+
+		print("Hiding both hands")
+		worker.hideHands()
+
+		print("Go to first setpoint")
+		firstSetpoint = setpointGenerator.generate("cabinet", PyKDL.Vector(0.55, -0.3, 0.0))
+		worker.driveToPointOnMap(firstSetpoint)
+		rospy.sleep(1.0)
+
+		# OPEN CABINET DOOR
+
+
+		# CATCH CAN
+
+		print("Go to second setpoint")
+		secondSetpoint = setpointGenerator.generate("table",PyKDL.Vector(1.0, 0.0, 0.0))
+		worker.driveToPointOnMap(secondSetpoint)
+		rospy.sleep(1.0)
+
+		# LEAVE CAN ON THE TABLE
+
+		print("Go to starting point")
+		thirdSetpoint = (0.0, 0.0, 0.0)
+		worker.driveToPointOnMap(thirdSetpoint)
+
+	except Exception as e:
+		print(e)
+		exitError(4)
+

@@ -18,20 +18,25 @@ class TrajectoryGenerator:
 
 	def next(self):
 		self.counter += 1
+
 		if self.counter < 5 * self.frequency:
-			return self.createTwist(0.2, 0.0, 0.0)
+			return self.createTwist(0.0, 0.0, 0.0)
 		if self.counter < 10 * self.frequency:
-			return self.createTwist(0.2, 0.2, 0.0)
+			return self.createTwist(0.15, 0.0, 0.0)
 		if self.counter < 15 * self.frequency:
-			return self.createTwist(0.0, 0.2, 0.0)
+			return self.createTwist(0.20, 0.15, 0.0)
 		if self.counter < 20 * self.frequency:
-			return self.createTwist(0.2, 0.2, 0.3)
+			return self.createTwist(0.0, 0.15, 0.0)
 		if self.counter < 25 * self.frequency:
-			return self.createTwist(0.0, 0.0, 0.4)
+			return self.createTwist(0.15, 0.20, 0.10)
 		if self.counter < 30 * self.frequency:
-			return self.createTwist(0.2, 0.0, 0.3)
+			return self.createTwist(0.0, 0.0, 0.3)
 		if self.counter < 35 * self.frequency:
-			return self.createTwist(0.0, 0.2, 0.3)
+			return self.createTwist(-0.15, 0.0, 0.0)
+		if self.counter < 40 * self.frequency:
+			return self.createTwist(0.0, 0.0, 0.15)
+		if self.counter < 45 * self.frequency:
+			return self.createTwist(0.0, 0.20, 0.15)
 		else:
 			return None
 
@@ -52,3 +57,4 @@ if __name__ == "__main__":
 
 	goodbyeMessage = Twist()
 	publisher.publish(goodbyeMessage)
+

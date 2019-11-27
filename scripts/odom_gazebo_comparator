@@ -1,0 +1,184 @@
+#!/usr/bin/env python2
+
+import rospy
+import signal
+from datetime import datetime
+import sys
+import csv
+import PyKDL
+import os
+import argparse
+import pathlib2
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from gazebo_msgs.msg import ModelStates
+
+class DataBuffer:
+	def __init__(self):
+		self.timeOffset = datetime.utcnow()
+		self.data = list()
+
+	def append(self, data):
+		entity = dict()
+		entity["time"] = (datetime.utcnow() - self.timeOffset).total_seconds()
+		entity["value"] = data
+		self.data.append(entity)
+
+class PoseBuffer:
+	def __init__(self, topicName):
+		self.topicName = "/" + topicName.replace("/", "_")
+		self.linear_x = DataBuffer()
+		self.linear_y = DataBuffer()
+		self.linear_z = DataBuffer()
+
+		self.orientation_r = DataBuffer()
+		self.orientation_p = DataBuffer()
+		self.orientation_y = DataBuffer()
+
+	def appendPose(self, pose):
+		self.linear_x.append(pose.position.x)
+		self.linear_y.append(pose.position.y)
+		self.linear_z.append(pose.position.z)
+
+		q = pose.orientation
+		rotation = PyKDL.Rotation.Quaternion(q.x, q.y, q.z, q.w)
+		rpy = rotation.GetRPY()
+		self.orientation_r.append(rpy[0])
+		self.orientation_p.append(rpy[1])
+		self.orientation_y.append(rpy[2])
+
+	def append(self, data):
+		self.appendPose(data)
+
+	def printToFile(self, filename):
+		buffers = [{"data": self.linear_x, "name": "linear_x"},
+				   {"data": self.linear_y, "name": "linear_y"},
+				   {"data": self.linear_z, "name": "linear_z"},
+				   {"data": self.orientation_r, "name": "orientation_r"},
+				   {"data": self.orientation_p, "name": "orientation_p"},
+				   {"data": self.orientation_y, "name": "orientation_y"}]
+		for buffer in buffers:
+			fullPath = filename + self.topicName + "_" +  buffer["name"] + ".csv"
+			print(fullPath)
+			with open(fullPath, 'wb') as fp:
+				writer = csv.writer(fp, delimiter=' ')
+				for message in buffer["data"].data:
+					writer.writerow([float(message["time"]), float(message["value"])])
+
+class OdomBuffer(PoseBuffer):
+	def __init__(self, topicName):
+		PoseBuffer.__init__(self, topicName)
+
+	def append(self, data):
+		pose = data.pose.pose
+		self.appendPose(pose)
+
+class ModelStateBuffer(PoseBuffer):
+	def __init__(self, topicName):
+		PoseBuffer.__init__(self, topicName)
+		self.counter = 0
+
+	def append(self, data):
+		self.counter += 1
+		if self.counter == 9:
+			idx = data.name.index("velma")
+			pose = data.pose[idx]
+			self.appendPose(pose)
+			self.counter = 0
+
+
+def argParserFactory():
+	parser = argparse.ArgumentParser(description="Simple node for recording twist and odom messages")
+	parser.add_argument("outputDirectory", help="Path to the output directory", type=os.path.abspath)
+	return parser
+
+def substractTimeSeries(b1, b2):
+	diffs = []
+	latchedb1 = 0.0
+	latchedb2 = 0.0
+	while len(b1) != 0 and len(b2) != 0:
+		if b1[0]["time"] > b2[0]["time"]:
+			latchedb2 = b2[0]["value"]
+			diffs.append({
+				"time": b2[0]["time"],
+				"value": latchedb1 - latchedb2
+			})
+			b2.pop(0)
+		else:
+			latchedb1 = b1[0]["value"]
+			diffs.append({
+				"time": b1[0]["time"],
+				"value": latchedb1 - latchedb2
+			})
+			b1.pop(0)
+	for v in b1:
+		diffs.append({
+			"time": v["time"],
+			"value": v["value"]- latchedb2
+		})
+
+	for v in b2:
+		diffs.append({
+			"time": v["time"],
+			"value": latchedb1 - v["value"]
+		})
+
+	return diffs
+
+
+
+def sigtermHandler(_signo, _stack_frame, buffers, path):
+	for buffer in buffers:
+		buffer.printToFile(path)
+
+	gazebo = buffers[0]
+	odom = buffers[1]
+
+	x_diffs = substractTimeSeries(gazebo.linear_x.data, odom.linear_x.data)
+	y_diffs = substractTimeSeries(gazebo.linear_y.data, odom.linear_y.data)
+	yaw_diffs = substractTimeSeries(gazebo.orientation_y.data, odom.orientation_y.data)
+
+	fullPath = path + "/" +  "x_diffs.csv"
+	print(fullPath)
+	with open(fullPath, 'wb') as fp:
+		writer = csv.writer(fp, delimiter=' ')
+		for message in x_diffs:
+			writer.writerow([float(message["time"]), float(message["value"])])
+
+	fullPath = path + "/" +  "y_diffs.csv"
+	print(fullPath)
+	with open(fullPath, 'wb') as fp:
+		writer = csv.writer(fp, delimiter=' ')
+		for message in y_diffs:
+			writer.writerow([float(message["time"]), float(message["value"])])
+
+	fullPath = path + "/" +  "yaw_diffs.csv"
+	print(fullPath)
+	with open(fullPath, 'wb') as fp:
+		writer = csv.writer(fp, delimiter=' ')
+		for message in yaw_diffs:
+			writer.writerow([float(message["time"]), float(message["value"])])
+	
+	sys.exit(0)
+
+if __name__ == "__main__":
+	argParser = argParserFactory()
+	parsedArgs = argParser.parse_args(sys.argv[1:])
+	savePath = parsedArgs.outputDirectory
+	if not os.path.exists(savePath):
+		os.mkdir(savePath)
+	print("Saving data to %s" % savePath)
+
+	gazeboTopic = "/gazebo/model_states"
+	odomTopic = "/odom"
+
+	twistBuffer = ModelStateBuffer(gazeboTopic)
+	odomBuffer = OdomBuffer(odomTopic)
+
+	rospy.init_node("data_collector", anonymous=True)
+	rospy.Subscriber(gazeboTopic, ModelStates, lambda message: twistBuffer.append(message))
+	rospy.Subscriber(odomTopic, Odometry, lambda message: odomBuffer.append(message))
+
+	signal.signal(signal.SIGINT, lambda x,y: sigtermHandler(x, y, [twistBuffer, odomBuffer], savePath))
+	rospy.spin()
+
