@@ -6,7 +6,7 @@ import tf2_ros
 import PyKDL
 import copy
 
-import geometry_msgs.msg
+from geometry_msgs.msg import Twist
 from omnivelma_driver.srv import STPT
 from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
 from shape_msgs.msg import SolidPrimitive
@@ -59,7 +59,14 @@ class VelmaTaskExecutor():
 		self.omniplannerServiceName = "/omniplanner/go_to_stpt"
 		self.omniplannerService = rospy.ServiceProxy(self.omniplannerServiceName, STPT)
 
-		self.octomapListener = 
+		self.trajectoryPlanner = Planner(self.velma.maxJointTrajLen())
+		if not self.trajectoryPlanner.waitForInit():
+			raise Exception("Could not initialize trajectory planner")
+		self.octomapListener = OctomapListener("/octomap_binary")
+		rospy.sleep(1.0)
+
+		octomap = self.octomapListener.getOctomap(timeout_s=5.0)
+		self.trajectoryPlanner.processWorld(octomap)
 
 		self.acquiringJointState = {
 			'torso_0_joint': 0, 
@@ -206,7 +213,6 @@ class VelmaTaskExecutor():
 			yaw += 2*math.pi
 		return [posX, posY, posZ, yaw]
 
-
 	def moveRelativeToInCartImpMode(self, tf, x, y, z, angle, tol=10):
 		(setpointX, setpointY, setpointZ, setpointYaw) = self.resolveRelativePosition(tf, x, y, z)
 		targetFrame = PyKDL.Frame(PyKDL.Rotation.RPY(0, 0, setpointYaw+angle), PyKDL.Vector(setpointX, setpointY, setpointZ))
@@ -246,6 +252,33 @@ class VelmaTaskExecutor():
 		self.moveHeadTo(-1.3, 0.7)
 		self.moveHeadTo(0.0, 0.0)
 
+		octomap = self.octomapListener.getOctomap(timeout_s=5.0)
+		self.trajectoryPlanner.processWorld(octomap)
+
+	def moveInJointImpedanceModeWithPlan(self, desiredJointState):
+		goalConstraint = qMapToConstraints(desiredJointState, 0.01, group=self.velma.getJointGroup("impedance_joints"))
+		for i in range(5):
+			rospy.sleep(0.5)
+			lastJointState = self.velma.getLastJointState()
+			print("Planning try no. {}".format(i))
+			trajectory = self.trajectoryPlanner.plan(lastJointState[1], [goalConstraint], "impedance_joints", max_velocity_scaling_factor=0.15, planner_id="RRTConnect")
+			if trajectory is None:
+				continue
+
+			print("Found trajectory, executing...")
+			if not self.velma.moveJointTraj(trajectory, start_time=0.5):
+				raise Exception("Could not move velma")
+			if self.velma.waitForJoint() == 0:
+				break
+			else:
+				print("Trajectory could not be completed")
+				continue
+		rospy.sleep(0.5)
+		lastJointState = self.velma.getLastJointState()
+		if not isConfigurationClose(desiredJointState, lastJointState):
+			raise Exception("Could not move joints to desired state")
+
+
 if __name__ == "__main__":
 	rospy.init_node('bsc_test_executor')
 	rospy.sleep(0.5)
@@ -253,42 +286,46 @@ if __name__ == "__main__":
 		setpointGenerator = SetpointGenerator()
 		worker = VelmaTaskExecutor()
 
-		print("Moving to position zero")
+		# print("Moving to position zero")
 		worker.moveToStartingPosition()
 
-		print("Hiding both hands")
-		worker.hideHands()
+		# print("Hiding both hands")
+		# worker.hideHands()
 
-		print("Go to first setpoint")
-		firstSetpoint = setpointGenerator.generate("cabinet", PyKDL.Vector(0.55, -0.3, 0.0))
-		worker.driveToPointOnMap(firstSetpoint)
-		rospy.sleep(1.0)
+		# print("Go to first setpoint")
+		# firstSetpoint = setpointGenerator.generate("cabinet", PyKDL.Vector(0.55, -0.3, 0.0))
+		# worker.driveToPointOnMap(firstSetpoint)
+		# rospy.sleep(1.0)
 
-		# OPEN CABINET DOOR
-		print("Preparing for grip")
-		cabinetTF = worker.prepareForGrip("cabinet")
+		# # OPEN CABINET DOOR
+		# print("Preparing for grip")
+		# cabinetTF = worker.prepareForGrip("cabinet")
 
-		print("Moving closer to cabinet")
-		worker.moveRelativeToInCartImpMode(cabinetTF, 0.40, -0.1, 0.09, 0.0)
+		# print("Moving closer to cabinet")
+		# worker.moveRelativeToInCartImpMode(cabinetTF, 0.40, -0.1, 0.09, 0.0)
 
-		print("Finding the door")
-		worker.setRightLWRImpedance(100, 100, 900, 200, 200, 200)
-		worker.moveRelativeToInCartImpMode(cabinetTF, 0.25, -0.1, 0.09, 0.0)
+		# print("Finding the door")
+		# worker.setRightLWRImpedance(100, 100, 900, 200, 200, 200)
+		# worker.moveRelativeToInCartImpMode(cabinetTF, 0.25, -0.1, 0.09, 0.0)
 
-		print("Finding the door handle")
-		worker.moveRelativeToInCartImpMode(cabinetTF, 0.30, -0.28, 0.09, 0.0)
+		# print("Finding the door handle")
+		# worker.moveRelativeToInCartImpMode(cabinetTF, 0.30, -0.29, 0.09, 0.0)
 
-		print("Open a lil bit")
-		worker.moveRelativeToInCartImpMode(cabinetTF, 0.50, -0.25, 0.09, 0.0)
+		# print("Open a lil bit")
+		# worker.moveRelativeToInCartImpMode(cabinetTF, 0.50, -0.25, 0.09, 0.0)
 
-		print("Open a lil bit more")
-		worker.setRightLWRImpedance(300, 300, 900, 200, 200, 200)
-		worker.moveRelativeToInCartImpMode(cabinetTF, 0.70, 0.1, 0.09, 0.0)
+		# print("Open a lil bit more")
+		# worker.setRightLWRImpedance(300, 300, 900, 200, 200, 200)
+		# worker.moveRelativeToInCartImpMode(cabinetTF, 0.70, 0.1, 0.09, 0.0)
 
-		print("Moving to starting grabbing position")
-		worker.moveToStartingPosition()
-		# CATCH CAN
-		worker.lookForObject()
+		# print("Moving to starting grabbing position")
+		# worker.moveToStartingPosition()
+		# # CATCH CAN
+		# worker.lookForObject()
+
+		desiredJointState = copy.deepcopy(worker.acquiringJointState)
+		desiredJointState["torso_0_joint"] = 1.0
+		worker.moveInJointImpedanceModeWithPlan(desiredJointState)
 
 		"""
 		print("Go to second setpoint")
