@@ -1,0 +1,86 @@
+#!/usr/bin/env python2
+
+import rospy
+import math
+import tf2_ros
+import PyKDL
+import copy
+from threading import Thread
+
+from geometry_msgs.msg import Twist
+from omnivelma_driver.srv import STPT
+from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
+from shape_msgs.msg import SolidPrimitive
+
+from velma_common import *
+from rcprg_planner import *
+from rcprg_ros_utils import exitError, MarkerPublisher
+
+from moveit_msgs.msg import AttachedCollisionObject, CollisionObject
+from shape_msgs.msg import SolidPrimitive
+from geometry_msgs.msg import Pose
+from visualization_msgs.msg import Marker
+import tf_conversions.posemath as pm
+
+
+class VelmaTaskExecutor():
+	def __init__(self):
+		self.velma = VelmaInterface()
+		if not self.velma.waitForInit(timeout_s=10.0):
+			raise Exception("Could not initialize VelmaInterface")
+
+		if self.velma.enableMotors() != 0:
+			raise Exception("Could not enable motors")
+
+		self.velma.startHomingHP()
+		if self.velma.waitForHP() != 0:
+			raise Exception("Could not home head pan motor")
+
+		self.velma.startHomingHT()
+		if self.velma.waitForHT() != 0:
+			raise Exception("Could not home head tilt motor")
+
+		diag = self.velma.getCoreCsDiag()
+		if not diag.motorsReady():
+			raise Exception("Motors must be homed and ready to use for this test.")   
+
+		self.omniplannerServiceName = "/omniplanner/go_to_stpt"
+		self.omniplannerService = rospy.ServiceProxy(self.omniplannerServiceName, STPT)
+
+	def hideHands(self):
+		handDesiredState = [0.5*math.pi, 0.5*math.pi, 0.5*math.pi, math.pi]
+
+		self.velma.moveHandRight(handDesiredState, [1, 1, 1, 1], [2000, 2000, 2000, 2000], 1000, hold=True)
+		self.velma.moveHandLeft(handDesiredState, [1, 1, 1, 1], [2000, 2000, 2000, 2000], 1000, hold=True)
+		if self.velma.waitForHandRight() != 0 and self.velma.waitForHandLeft() != 0:
+			raise Exception("Could not hide hands")
+
+	def driveToPointOnMap(self, setpoint):
+		(x, y, yaw) = setpoint
+		setpoint = STPT
+		setpoint.x = x
+		setpoint.y = y
+		setpoint.theta = yaw
+		setpoint.linear_velocity = 0.0
+		setpoint.angular_velocity = 0.0
+
+		response = self.omniplannerService(setpoint)
+
+if __name__ == "__main__":
+	rospy.init_node('nav_test_executor')
+	rospy.sleep(0.5)
+	try:
+		worker = VelmaTaskExecutor()
+
+		print("Hiding both hands")
+		worker.hideHands()
+		
+		worker.driveToPointOnMap((4.0, 0.0, 0.0))		
+		worker.driveToPointOnMap((3.5, -5.5, 3.14))
+		worker.driveToPointOnMap((-6.0, -5.5, -1.54))
+		worker.driveToPointOnMap((-6.0, 0.0, 1.54))
+		worker.driveToPointOnMap((0.0, 0.0, 1.54))
+
+	except Exception as e:
+		print(e)
+		exitError(4)

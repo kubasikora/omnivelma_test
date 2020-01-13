@@ -22,27 +22,56 @@ from geometry_msgs.msg import Pose
 from visualization_msgs.msg import Marker
 import tf_conversions.posemath as pm
 
-if __name__ == "__main__":
-	self.velma = VelmaInterface()
-	if not self.velma.waitForInit(timeout_s=10.0):
+def initializeROSNode():
+	rospy.init_node('bsc_rotary_test_executor')
+	rospy.sleep(0.5)
+
+def initializeRobot():
+	velma = VelmaInterface()
+	if not velma.waitForInit(timeout_s=10.0):
 		raise Exception("Could not initialize VelmaInterface")
-	if self.velma.enableMotors() != 0:
+	if velma.enableMotors() != 0:
 		raise Exception("Could not enable motors")
-	self.velma.startHomingHP()
-	if self.velma.waitForHP() != 0:
+		velma.startHomingHP()
+	if velma.waitForHP() != 0:
 		raise Exception("Could not home head pan motor")
-	self.velma.startHomingHT()
-	if self.velma.waitForHT() != 0:
+	velma.startHomingHT()
+	if velma.waitForHT() != 0:
 		raise Exception("Could not home head tilt motor")
-	diag = self.velma.getCoreCsDiag()
+	diag = velma.getCoreCsDiag()
 	if not diag.motorsReady():
 		raise Exception("Motors must be homed and ready to use for this test.")   
+	return velma
 
+def moveBodyToStartingPosition(velma):
+	startingJointState = {
+		'torso_0_joint':0,
+		'right_arm_0_joint':-0.3,   
+		'left_arm_0_joint':0.3,
+		'right_arm_1_joint':-1.8,   
+		'left_arm_1_joint':1.8,
+		'right_arm_2_joint':1.25,   
+		'left_arm_2_joint':-1.25,
+		'right_arm_3_joint':0.85,   
+		'left_arm_3_joint':-0.85,
+		'right_arm_4_joint':0,      
+		'left_arm_4_joint':0,
+		'right_arm_5_joint':-0.5,   
+		'left_arm_5_joint':0.5,
+		'right_arm_6_joint':0,      
+		'left_arm_6_joint': 0
+	}
+	velma.moveJoint(startingJointState, 3.0, start_time=0.5, position_tol=10.0/180.0*math.pi)
+	if velma.waitForJoint() != 0:
+		raise Exception("Moving body failed")
+
+def calculateSpinParams(num, velocity):
 	angle = 100*2*3.14
 	angularVelocity = 0.2
 	time =  angle/angularVelocity
+	return (angularVelocity, time)
 
-	publisher = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+def createTwistMessage(angularVelocity):
 	msg = Twist()
 	msg.linear.x = 0.0
 	msg.linear.y = 0.0
@@ -50,10 +79,33 @@ if __name__ == "__main__":
 	msg.angular.x = 0.0
 	msg.angular.y = 0.0
 	msg.angular.z = angularVelocity
+	return msg
+
+def makeNSpins(num, velocity):
+	(angularVelocity, time) = calculateSpinParams(num, velocity)
+	msg = createTwistMessage(angularVelocity)
+	publisher = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
 	startTime = rospy.get_rostime()
 	while rospy.get_rostime() - startTime < rospy.Duration.from_sec(time):
+		act = rospy.get_rostime() - startTime
+		dest = rospy.Duration.from_sec(time)
+		print((act/dest)*100, "%")
 		publisher.publish(msg)
-
 	stopMsg = Twist()
 	publisher.publish(stopMsg)
+
+if __name__ == "__main__":
+	initializeROSNode()
+	velma = initializeRobot()
+	moveBodyToStartingPosition(velma)
+	makeNSpins(100, 0.2)
+
+
+	
+
+	
+
+
+
+	
 

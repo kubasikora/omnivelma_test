@@ -658,13 +658,20 @@ if __name__ == "__main__":
 		# print("Moving to grabbing position with planner")
 		# worker.setJointImpedanceMode()
 
+		print("Set cimp mode for right lwr")
+		if not worker.velma.moveCartImpRightCurrentPos(start_time=0.2):
+		  raise Exception("Could not set CartImp mode for right lwr")
+
+		if worker.velma.waitForEffectorRight() != 0:
+		  raise Exception("Right effector error")
+
 		print "Moving the right tool and equilibrium pose from 'wrist' to 'grip' frame..."
 		T_B_Wl = worker.velma.getTf("B", "Wr")
 		T_Wl_Gl = worker.velma.getTf("Wr", "Gr")
 		if not worker.velma.moveCartImpRight([T_B_Wl*T_Wl_Gl], [0.1], [T_Wl_Gl], [0.1], None, None, PyKDL.Wrench(PyKDL.Vector(5,5,5), PyKDL.Vector(5,5,5)), start_time=0.5):
 			exitError(18)
-		if worker.velma.waitForEffectorRight() != 0:
-			exitError(19)
+		# if worker.velma.waitForEffectorRight() != 0:
+		# 	exitError(19)
 		print "The right tool is now in 'grip' pose"
 		rospy.sleep(0.5)
 
